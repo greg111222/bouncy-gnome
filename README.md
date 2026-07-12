@@ -3,8 +3,15 @@
 # bouncy-gnome
 Bouncy Hyprland-style animations extension for the GNOME Desktop Environment
 
-**May conflict with Blur my Shell: Open and close app to fix**
+## Features
+> Configurable animation settings; Can be configured within the GNOME Extension Manager
+> 
+> Open/Close animations
+> 
+> Resize animations
 
-Can be configured within the GNOME Extension Manager
+**!! Pairs very well with O-Tiling extension and has been tested so.**
+
+**!! Blur my Shell might conflict and have unforeseen consequences.**
 
 Tested on GNOME 50, Fedora Workstation 44
