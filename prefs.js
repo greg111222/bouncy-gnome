@@ -70,6 +70,19 @@ export default class SmoothWindowAnimationsPreferences extends ExtensionPreferen
             'How small the window shrinks to before disappearing',
             {lower: 0.5, upper: 0.99, step: 0.01, digits: 2}));
 
+        const resizeGroup = new Adw.PreferencesGroup({
+            title: 'Resizing',
+            description: 'Tween played when a window is resized or moved '
+                + 'programmatically - e.g. by an app or a tiling extension. '
+                + 'Interactive drag-resizing and maximize/fullscreen are '
+                + 'left untouched since those already animate.',
+        });
+        page.add(resizeGroup);
+
+        resizeGroup.add(makeSpinRow(
+            settings, 'resize-duration', 'Duration', 'Milliseconds',
+            {lower: 50, upper: 800, step: 10}));
+
         window.set_default_size(480, 520);
     }
 }
