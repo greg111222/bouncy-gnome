@@ -3,4 +3,6 @@
 # bouncy-gnome
 Bouncy Hyprland-style animations extension for the GNOME Desktop Environment
 
+Can be configured within the GNOME Extension Manager
+
 Tested on GNOME 50, Fedora Workstation 44
