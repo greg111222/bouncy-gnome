@@ -6,14 +6,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 // --- Tunables ---------------------------------------------------------
-// Durations, scales, and the overshoot toggle are all user-configurable -
-// see schemas/org.gnome.shell.extensions.smooth-window-animations.gschema.xml
-// and prefs.js. Only the close animation's curve is fixed - it stays a
-// plain monotonic ease since overshoot on close has nothing to settle into.
 const CLOSE_MODE = Clutter.AnimationMode.EASE_IN_OUT_QUAD;
 
-// Window types we bother animating. Things like desktop icons, docks,
-// tooltips, notifications, etc. are left alone so we don't break other UI.
 const ANIMATED_WINDOW_TYPES = new Set([
     Meta.WindowType.NORMAL,
     Meta.WindowType.DIALOG,
@@ -23,13 +17,8 @@ const ANIMATED_WINDOW_TYPES = new Set([
 export default class SmoothWindowAnimationsExtension extends Extension {
     enable() {
         this._settings = this.getSettings();
+        this._tracked = new Map(); // actor -> {rect, maximized, fullscreen}
 
-        // We can't intercept the shell's map/destroy signal handlers directly -
-        // they're connected internally via `.bind(this)`, which produces a
-        // closure we have no reference to. What we *can* patch is
-        // `_shouldAnimateActor`, since the shell looks it up live (as
-        // `this._shouldAnimateActor(...)`) right before it starts its own
-        // animation. We use that seam to swap in our own effect.
         this._origShouldAnimateActor = Main.wm._shouldAnimateActor;
 
         const extensionThis = this;
@@ -42,15 +31,11 @@ export default class SmoothWindowAnimationsExtension extends Extension {
             if ((forOpening || forClosing) && extensionThis._shouldHandle(actor)) {
                 const origEase = actor.ease;
 
-                // Intercept just the next call to actor.ease() - that's the
-                // one the default _mapWindow/_destroyWindow makes to run
-                // its own zoom/fade. We replace it with our animation.
                 actor.ease = function (...params) {
                     const innerStack = new Error().stack;
                     const stillOpening = innerStack.includes('_mapWindow@');
                     const stillClosing = innerStack.includes('_destroyWindow@');
 
-                    // Restore immediately so we only ever hijack one call.
                     actor.ease = origEase;
 
                     if (stillOpening || stillClosing) {
@@ -60,16 +45,19 @@ export default class SmoothWindowAnimationsExtension extends Extension {
                     }
                 };
 
-                // Tell the shell "yes, animate this" so it proceeds through
-                // its normal map/destroy path up to the ease() call we just
-                // hijacked. It still does its own bookkeeping (adding the
-                // actor to its internal tracking set) - we complete that
-                // bookkeeping ourselves at the end of our animation.
                 return true;
             }
 
             return extensionThis._origShouldAnimateActor.apply(this, [actor, types]);
         };
+
+        // --- Resize/move animation --------------------------------------
+        for (const actor of global.get_window_actors())
+            this._trackActor(actor);
+
+        this._mapId = global.window_manager.connect('map', (wm, actor) => {
+            this._trackActor(actor);
+        });
     }
 
     disable() {
@@ -77,6 +65,18 @@ export default class SmoothWindowAnimationsExtension extends Extension {
             Main.wm._shouldAnimateActor = this._origShouldAnimateActor;
             this._origShouldAnimateActor = null;
         }
+
+        if (this._mapId) {
+            global.window_manager.disconnect(this._mapId);
+            this._mapId = null;
+        }
+
+        if (this._tracked) {
+            for (const actor of this._tracked.keys())
+                actor.disconnectObject(actor);
+            this._tracked = null;
+        }
+
         this._settings = null;
     }
 
@@ -84,7 +84,8 @@ export default class SmoothWindowAnimationsExtension extends Extension {
         if (!St.Settings.get().enable_animations)
             return false;
 
-        const win = actor.meta_window;
+        // FIXED: Use the correct method call instead of an undefined property
+        const win = actor.get_meta_window ? actor.get_meta_window() : null;
         if (!win)
             return false;
 
@@ -96,6 +97,15 @@ export default class SmoothWindowAnimationsExtension extends Extension {
 
         actor.remove_all_transitions();
         actor.set_pivot_point(0.5, 0.5);
+
+        // FIXED: Temporarily turn off the blur shader during the open animation
+        let dynamicBlurEffect = null;
+        if (actor.get_effects) {
+            dynamicBlurEffect = actor.get_effects().find(e => e.toString().includes('Blur'));
+            if (dynamicBlurEffect) {
+                dynamicBlurEffect.set_enabled(false);
+            }
+        }
 
         if (opening) {
             const duration = settings.get_int('open-duration');
@@ -109,11 +119,6 @@ export default class SmoothWindowAnimationsExtension extends Extension {
             actor.opacity = 0;
             actor.show();
 
-            // Opacity gets its own plain, monotonic ease. EASE_OUT_BACK (used
-            // below for the scale) overshoots past its target before settling
-            // - fine for scale, but if opacity rides the same curve it also
-            // overshoots past 255 and dips back down, which showed up as a
-            // flicker right at the overshoot peak.
             actor.ease({
                 opacity: 255,
                 duration,
@@ -126,9 +131,10 @@ export default class SmoothWindowAnimationsExtension extends Extension {
                 duration,
                 mode: scaleMode,
                 onStopped: () => {
-                    // Does the shell's own cleanup (resets scale/opacity/
-                    // pivot, removes actor from its tracking set, and calls
-                    // shellwm.completed_map()).
+                    // FIXED: Safely restore the blur effect only AFTER the window is fully opened and scaled to 1.0
+                    if (dynamicBlurEffect) {
+                        dynamicBlurEffect.set_enabled(true);
+                    }
                     Main.wm._mapWindowDone(global.window_manager, actor);
                 },
             });
@@ -151,5 +157,120 @@ export default class SmoothWindowAnimationsExtension extends Extension {
                 },
             });
         }
+    }
+
+    _trackActor(actor) {
+        if (!actor || this._tracked.has(actor))
+            return;
+
+        const win = actor.get_meta_window ? actor.get_meta_window() : null;
+        if (!win)
+            return;
+
+        this._tracked.set(actor, {
+            rect: win.get_frame_rect(),
+            maximized: win.is_maximized ? win.is_maximized() : win.get_maximized(),
+            fullscreen: win.is_fullscreen(),
+        });
+
+        win.connectObject(
+            'size-changed', () => this._onGeometryChanged(actor),
+            'position-changed', () => this._onGeometryChanged(actor),
+            actor
+        );
+    }
+
+    _onGeometryChanged(actor) {
+        if (!this._tracked || !this._tracked.has(actor))
+            return;
+
+        const win = actor.get_meta_window ? actor.get_meta_window() : null;
+        if (!win)
+            return;
+
+        const prev = this._tracked.get(actor);
+        const rect = win.get_frame_rect();
+        const maximized = win.is_maximized ? win.is_maximized() : win.get_maximized();
+        const fullscreen = win.is_fullscreen();
+
+        const oldRect = prev.rect;
+        
+        // Prevent infinite event loops if the dimensions match exactly
+        if (oldRect.x === rect.x && oldRect.y === rect.y &&
+            oldRect.width === rect.width && oldRect.height === rect.height) {
+            return;
+        }
+
+        // Keep standard maximize/fullscreen transitions native to GNOME
+        if (maximized !== prev.maximized || fullscreen !== prev.fullscreen) {
+            this._tracked.set(actor, {rect, maximized, fullscreen});
+            return;
+        }
+
+        if (!this._shouldHandle(actor))
+            return;
+
+        // Run the optimized slide-and-resize animation
+        this._runResizeAnimation(actor, oldRect, rect);
+
+        // Update baseline metrics immediately for the next layout shift
+        this._tracked.set(actor, {rect, maximized, fullscreen});
+    }
+
+    _runResizeAnimation(actor, oldRect, newRect) {
+        let duration = 220;
+        try {
+            duration = this._settings.get_int('resize-duration');
+        } catch (e) {}
+
+        // 1. Clear any active animations immediately
+        actor.remove_all_transitions();
+
+        // 2. HARD RESET: Force the transformation matrix back to identity first.
+        actor.translation_x = 0;
+        actor.translation_y = 0;
+        actor.scale_x = 1.0;
+        actor.scale_y = 1.0;
+
+        // Temporarily pause Blur My Shell's application shader
+        let dynamicBlurEffect = null;
+        if (actor.effects && Array.isArray(actor.effects)) {
+            dynamicBlurEffect = actor.effects.find(e => e.toString().includes('Blur'));
+            if (dynamicBlurEffect) {
+                dynamicBlurEffect.set_enabled(false);
+            }
+        }
+
+        // 3. Set top-left anchor point for the transition
+        actor.set_pivot_point(0, 0);
+        
+        // Calculate the initial display offsets
+        actor.translation_x = oldRect.x - newRect.x;
+        actor.translation_y = oldRect.y - newRect.y;
+        actor.scale_x = oldRect.width / newRect.width;
+        actor.scale_y = oldRect.height / newRect.height;
+
+        // 4. Run the clean visual tween back to native properties (with fixed commas)
+        actor.ease({
+            translation_x: 0,
+            translation_y: 0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            duration,
+            mode: Clutter.AnimationMode.EASE_OUT_CUBIC,
+            onStopped: () => {
+                // 5. POST-ANIMATION CLEANUP: Restore the native pivot point and clean up transforms
+                actor.set_pivot_point(0.5, 0.5);
+                actor.translation_x = 0;
+                actor.translation_y = 0;
+                actor.scale_x = 1.0;
+                actor.scale_y = 1.0;
+
+                // Re-enable blur once layout is fully locked in place
+                if (dynamicBlurEffect) {
+                    dynamicBlurEffect.set_enabled(true);
+                }
+            }
+        });
     }
 }
