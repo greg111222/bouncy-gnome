@@ -1,0 +1,41 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="smooth-window-animations">
+  <schema id="org.gnome.shell.extensions.smooth-window-animations"
+          path="/org/gnome/shell/extensions/smooth-window-animations/">
+
+    <key name="open-duration" type="i">
+      <default>300</default>
+      <range min="50" max="1000"/>
+      <summary>Open animation duration</summary>
+      <description>Duration in milliseconds of the window-open animation.</description>
+    </key>
+
+    <key name="open-start-scale" type="d">
+      <default>0.82</default>
+      <range min="0.50" max="0.99"/>
+      <summary>Open start scale</summary>
+      <description>The scale a window starts at before growing to full size when opening.</description>
+    </key>
+
+    <key name="enable-overshoot" type="b">
+      <default>true</default>
+      <summary>Enable overshoot</summary>
+      <description>Whether the open animation slightly overshoots past full size before settling back.</description>
+    </key>
+
+    <key name="close-duration" type="i">
+      <default>220</default>
+      <range min="50" max="1000"/>
+      <summary>Close animation duration</summary>
+      <description>Duration in milliseconds of the window-close animation.</description>
+    </key>
+
+    <key name="close-end-scale" type="d">
+      <default>0.85</default>
+      <range min="0.50" max="0.99"/>
+      <summary>Close end scale</summary>
+      <description>The scale a window shrinks to before disappearing when closing.</description>
+    </key>
+
+  </schema>
+</schemalist>
