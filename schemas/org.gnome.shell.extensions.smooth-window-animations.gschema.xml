@@ -1,4 +1,4 @@
- <?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="smooth-window-animations">
   <schema id="org.gnome.shell.extensions.smooth-window-animations"
           path="/org/gnome/shell/extensions/smooth-window-animations/">
@@ -35,6 +35,13 @@
       <range min="0.50" max="0.99"/>
       <summary>Close end scale</summary>
       <description>The scale a window shrinks to before disappearing when closing.</description>
+    </key>
+
+    <key name="resize-duration" type="i">
+      <default>250</default>
+      <range min="50" max="800"/>
+      <summary>Resize animation duration</summary>
+      <description>Duration in milliseconds of the tween played when a window is resized or moved programmatically (not via interactive drag, and not maximize/fullscreen).</description>
     </key>
 
   </schema>
