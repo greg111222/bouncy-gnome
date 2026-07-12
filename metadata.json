@@ -1,0 +1,9 @@
+{
+    "uuid": "smooth-window-animations@local",
+    "name": "Smooth Window Animations",
+    "description": "Animates window opening with a scale + fade-in and a slight overshoot, and window closing with a smooth scale + fade-out.",
+    "shell-version": ["50"],
+    "version": 1,
+    "url": "",
+    "settings-schema": "org.gnome.shell.extensions.smooth-window-animations"
+}
